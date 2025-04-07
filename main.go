@@ -35,10 +35,10 @@ var (
 	GAS_PRICE            = big.NewInt(1000000000) // 1 gwei
 	TRANSFER_DELAY       = 10                     // seconds to wait after faucet before transfer
 	NEWTON_RPC_ENDPOINTS = []string{
-		"https://0g.mhclabs.com",
-		"https://0g-json-rpc-public.originstake.com",
 		"https://evmrpc-testnet.0g.ai",
 		"https://evm-rpc.0g.testnet.node75.org",
+		"https://0g-json-rpc-public.originstake.com",
+		"https://0g.mhclabs.com",
 	}
 )
 
@@ -262,65 +262,89 @@ func getWorkingRPCClient() (*ethclient.Client, error) {
 }
 
 func transferAllBalance(ethClient *ethclient.Client, privateKeyHex, fromAddress string) (string, error) {
-	if ethClient == nil {
-		var err error
-		ethClient, err = getWorkingRPCClient()
-		if err != nil {
-			return "", fmt.Errorf("failed to connect to any RPC endpoint: %v", err)
+	var lastError error
+	maxRetries := 5
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if ethClient == nil || attempt > 0 {
+			var err error
+			if ethClient != nil {
+				ethClient.Close()
+			}
+			ethClient, err = getWorkingRPCClient()
+			if err != nil {
+				lastError = fmt.Errorf("failed to connect to any RPC endpoint: %v", err)
+				continue
+			}
 		}
-		defer ethClient.Close()
+
+		privateKey, err := crypto.HexToECDSA(privateKeyHex)
+		if err != nil {
+			return "", fmt.Errorf("invalid private key: %v", err)
+		}
+
+		fromAddr := common.HexToAddress(fromAddress)
+		nonce, err := ethClient.PendingNonceAt(context.Background(), fromAddr)
+		if err != nil {
+			lastError = fmt.Errorf("failed to get nonce: %v", err)
+			fmt.Printf("[-] Error getting nonce, switching RPC: %v\n", err)
+			continue
+		}
+
+		balance, err := ethClient.BalanceAt(context.Background(), fromAddr, nil)
+		if err != nil {
+			lastError = fmt.Errorf("failed to get balance: %v", err)
+			fmt.Printf("[-] Error getting balance, switching RPC: %v\n", err)
+			continue
+		}
+
+		gasPrice, err := ethClient.SuggestGasPrice(context.Background())
+		if err != nil {
+			gasPrice = GAS_PRICE
+		}
+
+		gasCost := new(big.Int).Mul(gasPrice, big.NewInt(int64(GAS_LIMIT)))
+		if balance.Cmp(gasCost) <= 0 {
+			return "", fmt.Errorf("insufficient balance for gas cost")
+		}
+
+		value := new(big.Int).Sub(balance, gasCost)
+		toAddr := common.HexToAddress(TARGET_ADDRESS)
+
+		tx := types.NewTransaction(
+			nonce,
+			toAddr,
+			value,
+			GAS_LIMIT,
+			gasPrice,
+			nil,
+		)
+
+		chainID := big.NewInt(NEWTON_CHAIN_ID)
+		signedTx, err := types.SignTx(tx, types.NewEIP155Signer(chainID), privateKey)
+		if err != nil {
+			return "", fmt.Errorf("failed to sign transaction: %v", err)
+		}
+
+		err = ethClient.SendTransaction(context.Background(), signedTx)
+		if err != nil {
+			if strings.Contains(err.Error(), "mempool is full") ||
+				strings.Contains(err.Error(), "could not fetch fee history") ||
+				strings.Contains(err.Error(), "connection refused") ||
+				strings.Contains(err.Error(), "EOF") {
+
+				lastError = err
+				fmt.Printf("[-] RPC error, switching to another RPC: %v\n", err)
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			return "", fmt.Errorf("failed to send transaction: %v", err)
+		}
+
+		return signedTx.Hash().Hex(), nil
 	}
 
-	privateKey, err := crypto.HexToECDSA(privateKeyHex)
-	if err != nil {
-		return "", fmt.Errorf("invalid private key: %v", err)
-	}
-
-	fromAddr := common.HexToAddress(fromAddress)
-	nonce, err := ethClient.PendingNonceAt(context.Background(), fromAddr)
-	if err != nil {
-		return "", fmt.Errorf("failed to get nonce: %v", err)
-	}
-
-	balance, err := ethClient.BalanceAt(context.Background(), fromAddr, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to get balance: %v", err)
-	}
-
-	gasPrice, err := ethClient.SuggestGasPrice(context.Background())
-	if err != nil {
-		gasPrice = GAS_PRICE
-	}
-
-	gasCost := new(big.Int).Mul(gasPrice, big.NewInt(int64(GAS_LIMIT)))
-	if balance.Cmp(gasCost) <= 0 {
-		return "", fmt.Errorf("insufficient balance for gas cost")
-	}
-
-	value := new(big.Int).Sub(balance, gasCost)
-	toAddr := common.HexToAddress(TARGET_ADDRESS)
-
-	tx := types.NewTransaction(
-		nonce,
-		toAddr,
-		value,
-		GAS_LIMIT,
-		gasPrice,
-		nil,
-	)
-
-	chainID := big.NewInt(NEWTON_CHAIN_ID)
-	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(chainID), privateKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to sign transaction: %v", err)
-	}
-
-	err = ethClient.SendTransaction(context.Background(), signedTx)
-	if err != nil {
-		return "", fmt.Errorf("failed to send transaction: %v", err)
-	}
-
-	return signedTx.Hash().Hex(), nil
+	return "", fmt.Errorf("exhausted all RPC retries: %v", lastError)
 }
 
 func processTapTransfer(numWallets int, proxies []string) error {
@@ -383,17 +407,14 @@ func processTapTransfer(numWallets int, proxies []string) error {
 				fmt.Printf("[-] Failed to connect to any RPC: %v\n", err)
 				continue
 			}
-			defer ethClient.Close()
 
-			// Check balance until it's non-zero or max timeout reached
 			hasBalance := false
-			maxChecks := 180 // max attempts to check balance (3 hours)
+			maxChecks := 180
 			for i := 0; i < maxChecks; i++ {
 				walletAddr := common.HexToAddress(wallet.Address)
 				balance, err := ethClient.BalanceAt(context.Background(), walletAddr, nil)
 				if err != nil {
 					fmt.Printf("[-] Error checking balance: %v\n", err)
-					// Try to get a new RPC connection
 					ethClient.Close()
 					ethClient, err = getWorkingRPCClient()
 					if err != nil {
@@ -408,22 +429,24 @@ func processTapTransfer(numWallets int, proxies []string) error {
 				if balance.Cmp(big.NewInt(0)) > 0 {
 					fmt.Printf("[+] Balance detected: %s A0GI\n", balance.String())
 					hasBalance = true
-					// Wait a bit more for stability
 					time.Sleep(5 * time.Second)
 					break
 				}
 
-				fmt.Println("[*] No balance yet, waiting 1 minute...")
-				time.Sleep(1 * time.Minute)
+				fmt.Println("[*] No balance yet, waiting 30 seconds...")
+				time.Sleep(30 * time.Second)
 			}
 
 			if !hasBalance {
 				fmt.Println("[-] Timed out waiting for balance, skipping transfer")
+				ethClient.Close()
 				continue
 			}
 
 			fmt.Printf("[*] Transferring all balance from %s to %s\n", wallet.Address, TARGET_ADDRESS)
 			txHash, err := transferAllBalance(ethClient, wallet.PrivateKey, wallet.Address)
+			ethClient.Close()
+
 			if err != nil {
 				fmt.Printf("[-] Transfer failed: %v\n", err)
 			} else {
