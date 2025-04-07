@@ -27,7 +27,7 @@ var (
 	CAPTCHA_API_KEY   = "0819e870cb1567524090e29e1f14b4eb"
 	HCAPTCHA_SITE_KEY = "1230eb62-f50c-4da4-a736-da5c3c342e8e"
 	FAUCET_ENDPOINT   = "https://992dkn4ph6.execute-api.us-west-1.amazonaws.com/"
-	MAX_RETRY         = 2
+	MAX_RETRY         = 3
 	REQUEST_DELAY     = 10
 	NEWTON_RPC        = "https://0g.mhclabs.com"
 	NEWTON_CHAIN_ID   = int64(16600)
