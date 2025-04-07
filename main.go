@@ -27,7 +27,7 @@ var (
 	CAPTCHA_API_KEY      = "0819e870cb1567524090e29e1f14b4eb"
 	HCAPTCHA_SITE_KEY    = "1230eb62-f50c-4da4-a736-da5c3c342e8e"
 	FAUCET_ENDPOINT      = "https://992dkn4ph6.execute-api.us-west-1.amazonaws.com/"
-	MAX_RETRY            = 5
+	MAX_RETRY            = 2
 	REQUEST_DELAY        = 10
 	NEWTON_CHAIN_ID      = int64(16600)
 	TARGET_ADDRESS       = "0x6980437B8E74FC08856983F28AC637D5487ff173"
@@ -175,8 +175,8 @@ func solveCaptcha(client *http.Client) *string {
 			fmt.Println("[+] Captcha solved successfully.")
 			return &solutionResp.Request
 		} else if solutionResp.Request == "CAPCHA_NOT_READY" {
-			fmt.Println("[*] Captcha still pending...")
-			time.Sleep(5 * time.Second)
+			fmt.Println("[*] Captcha still pending, waiting 30 sec ....")
+			time.Sleep(30 * time.Second)
 		} else {
 			fmt.Println("[-] Captcha error:", solutionResp.Request)
 			return nil
