@@ -408,15 +408,6 @@ func processExistingWallets(wallets []string, proxies []string) error {
 		return fmt.Errorf("error: no wallets available in wallet.txt")
 	}
 
-	walletsJSON, err := os.ReadFile("wallets.json")
-	if err == nil {
-		var walletsData []map[string]string
-		json.Unmarshal(walletsJSON, &walletsData)
-		for i := len(walletsData) - 1; i >= 0; i-- {
-			wallets = append(wallets, walletsData[i]["address"])
-		}
-	}
-
 	for idx, wallet := range wallets {
 		proxyStr := ""
 		if idx < len(proxies) {
