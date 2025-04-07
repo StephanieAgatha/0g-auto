@@ -1,5 +1,3 @@
-pkg-lemonprime-pool-performance-country-DE-session-JGHQ647:op9eph5d7pgvi5p3@gw-eu.lemonclub.io:5555
-pkg-lemonprime-pool-performance-country-DE-session-OSVN494:op9eph5d7pgvi5p3@gw-eu.lemonclub.io:5555
 pkg-lemonprime-pool-performance-country-DE-session-XYGH411:op9eph5d7pgvi5p3@gw-eu.lemonclub.io:5555
 pkg-lemonprime-pool-performance-country-DE-session-GEJK025:op9eph5d7pgvi5p3@gw-eu.lemonclub.io:5555
 pkg-lemonprime-pool-performance-country-DE-session-KRIX905:op9eph5d7pgvi5p3@gw-eu.lemonclub.io:5555

@@ -24,22 +24,22 @@ import (
 )
 
 var (
-	CAPTCHA_API_KEY   = "0819e870cb1567524090e29e1f14b4eb"
-	HCAPTCHA_SITE_KEY = "1230eb62-f50c-4da4-a736-da5c3c342e8e"
-	FAUCET_ENDPOINT   = "https://992dkn4ph6.execute-api.us-west-1.amazonaws.com/"
-	MAX_RETRY         = 5
-	REQUEST_DELAY     = 10
-	NEWTON_RPC        = "https://evmrpc-testnet.0g.ai"
-	NEWTON_CHAIN_ID   = int64(16600)
-	TARGET_ADDRESS    = "0x6980437B8E74FC08856983F28AC637D5487ff173"
-	GAS_LIMIT         = uint64(21000)
-	GAS_PRICE         = big.NewInt(1000000000) // 1 gwei
-	TRANSFER_DELAY    = 10                     // seconds to wait after faucet before transfer
-
-	/*
-		rpc :
-		https://0g.mhclabs.com , https://0g-json-rpc-public.originstake.com , https://evmrpc-testnet.0g.ai
-	*/
+	CAPTCHA_API_KEY      = "0819e870cb1567524090e29e1f14b4eb"
+	HCAPTCHA_SITE_KEY    = "1230eb62-f50c-4da4-a736-da5c3c342e8e"
+	FAUCET_ENDPOINT      = "https://992dkn4ph6.execute-api.us-west-1.amazonaws.com/"
+	MAX_RETRY            = 5
+	REQUEST_DELAY        = 10
+	NEWTON_CHAIN_ID      = int64(16600)
+	TARGET_ADDRESS       = "0x6980437B8E74FC08856983F28AC637D5487ff173"
+	GAS_LIMIT            = uint64(21000)
+	GAS_PRICE            = big.NewInt(1000000000) // 1 gwei
+	TRANSFER_DELAY       = 10                     // seconds to wait after faucet before transfer
+	NEWTON_RPC_ENDPOINTS = []string{
+		"https://0g.mhclabs.com",
+		"https://0g-json-rpc-public.originstake.com",
+		"https://evmrpc-testnet.0g.ai",
+		"https://evm-rpc.0g.testnet.node75.org",
+	}
 )
 
 type CaptchaResponse struct {
@@ -233,12 +233,40 @@ func claimFaucet(client *http.Client, wallet, captchaToken string) (string, bool
 	return "", false
 }
 
+func getWorkingRPCClient() (*ethclient.Client, error) {
+	var lastErr error
+
+	// Try each RPC endpoint
+	for _, endpoint := range NEWTON_RPC_ENDPOINTS {
+		client, err := ethclient.Dial(endpoint)
+		if err != nil {
+			lastErr = err
+			fmt.Printf("[-] Failed to connect to RPC %s: %v\n", endpoint, err)
+			continue
+		}
+
+		// Test the connection by making a simple call
+		_, err = client.BlockNumber(context.Background())
+		if err != nil {
+			lastErr = err
+			fmt.Printf("[-] RPC %s is not responding: %v\n", endpoint, err)
+			client.Close()
+			continue
+		}
+
+		fmt.Printf("[+] Connected to RPC: %s\n", endpoint)
+		return client, nil
+	}
+
+	return nil, fmt.Errorf("all RPC endpoints failed: %v", lastErr)
+}
+
 func transferAllBalance(ethClient *ethclient.Client, privateKeyHex, fromAddress string) (string, error) {
 	if ethClient == nil {
 		var err error
-		ethClient, err = ethclient.Dial(NEWTON_RPC)
+		ethClient, err = getWorkingRPCClient()
 		if err != nil {
-			return "", fmt.Errorf("failed to connect to the Ethereum client: %v", err)
+			return "", fmt.Errorf("failed to connect to any RPC endpoint: %v", err)
 		}
 		defer ethClient.Close()
 	}
@@ -350,19 +378,29 @@ func processTapTransfer(numWallets int, proxies []string) error {
 
 			fmt.Println("[*] Waiting for faucet transaction to confirm (checking balance)...")
 
-			client, err := ethclient.Dial(NEWTON_RPC)
+			ethClient, err := getWorkingRPCClient()
 			if err != nil {
-				fmt.Printf("[-] Failed to connect to RPC: %v\n", err)
+				fmt.Printf("[-] Failed to connect to any RPC: %v\n", err)
 				continue
 			}
+			defer ethClient.Close()
 
+			// Check balance until it's non-zero or max timeout reached
 			hasBalance := false
 			maxChecks := 180 // max attempts to check balance (3 hours)
 			for i := 0; i < maxChecks; i++ {
 				walletAddr := common.HexToAddress(wallet.Address)
-				balance, err := client.BalanceAt(context.Background(), walletAddr, nil)
+				balance, err := ethClient.BalanceAt(context.Background(), walletAddr, nil)
 				if err != nil {
 					fmt.Printf("[-] Error checking balance: %v\n", err)
+					// Try to get a new RPC connection
+					ethClient.Close()
+					ethClient, err = getWorkingRPCClient()
+					if err != nil {
+						fmt.Printf("[-] Failed to reconnect to RPC: %v\n", err)
+						time.Sleep(3 * time.Second)
+						continue
+					}
 					time.Sleep(3 * time.Second)
 					continue
 				}
@@ -370,12 +408,12 @@ func processTapTransfer(numWallets int, proxies []string) error {
 				if balance.Cmp(big.NewInt(0)) > 0 {
 					fmt.Printf("[+] Balance detected: %s A0GI\n", balance.String())
 					hasBalance = true
-					// wait a bit more
-					time.Sleep(7 * time.Second)
+					// Wait a bit more for stability
+					time.Sleep(5 * time.Second)
 					break
 				}
 
-				fmt.Println("[*] No balance yet, waiting 1 minutes...")
+				fmt.Println("[*] No balance yet, waiting 1 minute...")
 				time.Sleep(1 * time.Minute)
 			}
 
@@ -385,7 +423,7 @@ func processTapTransfer(numWallets int, proxies []string) error {
 			}
 
 			fmt.Printf("[*] Transferring all balance from %s to %s\n", wallet.Address, TARGET_ADDRESS)
-			txHash, err := transferAllBalance(client, wallet.PrivateKey, wallet.Address)
+			txHash, err := transferAllBalance(ethClient, wallet.PrivateKey, wallet.Address)
 			if err != nil {
 				fmt.Printf("[-] Transfer failed: %v\n", err)
 			} else {
