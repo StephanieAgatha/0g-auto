@@ -27,14 +27,19 @@ var (
 	CAPTCHA_API_KEY   = "0819e870cb1567524090e29e1f14b4eb"
 	HCAPTCHA_SITE_KEY = "1230eb62-f50c-4da4-a736-da5c3c342e8e"
 	FAUCET_ENDPOINT   = "https://992dkn4ph6.execute-api.us-west-1.amazonaws.com/"
-	MAX_RETRY         = 3
+	MAX_RETRY         = 5
 	REQUEST_DELAY     = 10
-	NEWTON_RPC        = "https://0g.mhclabs.com"
+	NEWTON_RPC        = "https://evmrpc-testnet.0g.ai"
 	NEWTON_CHAIN_ID   = int64(16600)
 	TARGET_ADDRESS    = "0x6980437B8E74FC08856983F28AC637D5487ff173"
 	GAS_LIMIT         = uint64(21000)
 	GAS_PRICE         = big.NewInt(1000000000) // 1 gwei
-	TRANSFER_DELAY    = 30                     // seconds to wait after faucet before transfer
+	TRANSFER_DELAY    = 10                     // seconds to wait after faucet before transfer
+
+	/*
+		rpc :
+		https://0g.mhclabs.com , https://0g-json-rpc-public.originstake.com , https://evmrpc-testnet.0g.ai
+	*/
 )
 
 type CaptchaResponse struct {
@@ -352,7 +357,7 @@ func processTapTransfer(numWallets int, proxies []string) error {
 			}
 
 			hasBalance := false
-			maxChecks := 100 // max attempts to check balance
+			maxChecks := 180 // max attempts to check balance (3 hours)
 			for i := 0; i < maxChecks; i++ {
 				walletAddr := common.HexToAddress(wallet.Address)
 				balance, err := client.BalanceAt(context.Background(), walletAddr, nil)
